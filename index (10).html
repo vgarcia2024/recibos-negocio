@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ZEROXSIENTO MENSAJERÍA — Generador de recibos</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="app">
+
+    <!-- ── LEFT PANEL: FORM ── -->
+    <div class="form-panel">
+
+      <!-- Logo / Title -->
+      <div class="brand-row">
+        <div class="brand-icon">ZX</div>
+        <div>
+          <div class="brand-title">ZEROXSIENTO MENSAJERÍA</div>
+          <div class="brand-subtitle">Generador de recibos</div>
+        </div>
+      </div>
+
+      <!-- Receipt number badge -->
+      <div class="badge-row">
+        <div>
+          <div class="badge-label">N° DE RECIBO</div>
+          <div class="badge-number" id="badgeNumber">00001</div>
+        </div>
+        <div class="badge-date-wrap">
+          <div class="badge-label">FECHA Y HORA</div>
+          <div class="badge-date" id="badgeDate">--/--/----</div>
+          <div class="badge-time" id="badgeTime">--:--</div>
+        </div>
+      </div>
+
+      <!-- Fields -->
+      <div class="fields">
+        <div class="field">
+          <label for="cliente">CLIENTE</label>
+          <input type="text" id="cliente" placeholder="Nombre del cliente..." />
+        </div>
+
+        <div class="field">
+          <label for="dinero">DINERO RECIBIDO ($)</label>
+          <div class="money-input-wrap">
+            <span class="money-symbol">$</span>
+            <input type="number" id="dinero" placeholder="0.00" min="0" step="0.01" />
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="observacion">DESCRIPCIÓN / OBSERVACIÓN</label>
+          <textarea id="observacion" rows="4" placeholder="Detalle de la operación..."></textarea>
+        </div>
+      </div>
+
+      <!-- Info note -->
+      <div class="note note-info">
+        💡 Al imprimir se genera el <strong>ORIGINAL</strong> (cliente) y el <strong>DUPLICADO</strong> (tu copia). El número se incrementa automáticamente.
+      </div>
+
+      <!-- Supabase note -->
+      <div class="note note-warning">
+        🗄️ <strong>Supabase:</strong> Conecta tu base de datos para guardar recibos y sincronizar el contador entre dispositivos. El número actual se guarda localmente por ahora.
+      </div>
+
+      <!-- Print button -->
+      <button id="printBtn" class="print-btn" disabled>🖨 Imprimir / Exportar PDF</button>
+    </div>
+
+    <!-- ── RIGHT PANEL: RECEIPT PREVIEW ── -->
+    <div class="preview-panel">
+      <div class="preview-label">VISTA PREVIA — 80mm</div>
+
+      <div id="print-area" class="print-area">
+        <!-- ORIGINAL -->
+        <div class="receipt-sheet" id="sheetOriginal">
+          <div class="header-row">
+            <div class="receipt-no" id="numOriginal">N° 00001</div>
+            <div class="logo-row">
+              <img src="assets/logo.png" alt="Western Union / Pago Fácil" />
+              <span class="percent">0%</span>
+            </div>
+          </div>
+
+          <div class="company-block">
+            <div class="company-name">ZEROXSIENTO</div>
+            <div class="company-sub">MENSAJERÍA</div>
+          </div>
+
+          <div class="no-tax">NO VÁLIDO PARA IMPUESTOS</div>
+
+          <div class="section-title">CUENTAS CORRIENTES Y OTROS TRÁMITES</div>
+
+          <div class="date-row">
+            <span>DÍA: <strong id="diaOriginal">--</strong></span>
+            <span>MES: <strong id="mesOriginal">--</strong></span>
+            <span>AÑO: <strong id="anioOriginal">----</strong></span>
+            <span>HORA: <strong id="horaOriginal">--:--</strong></span>
+          </div>
+
+          <div class="fields-block">
+            <div class="field-group">
+              <div class="field-label">CLIENTE:</div>
+              <div class="field-value" id="clienteOriginal"></div>
+            </div>
+            <div class="field-group">
+              <div class="field-label">DINERO RECIBIDO:</div>
+              <div class="field-value money" id="dineroOriginal"></div>
+            </div>
+            <div class="field-group">
+              <div class="field-label">DESCRIPCIÓN / OBSERVACIÓN:</div>
+              <div class="field-value obs" id="obsOriginal"></div>
+            </div>
+          </div>
+
+          <div class="signature-row">
+            <div class="signature-cliente">Firma del Cliente</div>
+            <div class="signature-cobro">Cobro</div>
+          </div>
+
+          <div class="copy-label">ORIGINAL</div>
+        </div>
+
+        <!-- CUT LINE -->
+        <div class="cut-line">
+          <span>✂</span>
+          <div class="cut-dash"></div>
+          <span>✂</span>
+        </div>
+
+        <!-- DUPLICADO -->
+        <div class="receipt-sheet" id="sheetDuplicado">
+          <div class="watermark">DUPLICADO</div>
+
+          <div class="header-row">
+            <div class="receipt-no" id="numDuplicado">N° 00001</div>
+            <div class="logo-row">
+              <img src="assets/logo.png" alt="Western Union / Pago Fácil" />
+              <span class="percent">0%</span>
+            </div>
+          </div>
+
+          <div class="company-block">
+            <div class="company-name">ZEROXSIENTO</div>
+            <div class="company-sub">MENSAJERÍA</div>
+          </div>
+
+          <div class="no-tax">NO VÁLIDO PARA IMPUESTOS</div>
+
+          <div class="section-title">CUENTAS CORRIENTES Y OTROS TRÁMITES</div>
+
+          <div class="date-row">
+            <span>DÍA: <strong id="diaDuplicado">--</strong></span>
+            <span>MES: <strong id="mesDuplicado">--</strong></span>
+            <span>AÑO: <strong id="anioDuplicado">----</strong></span>
+            <span>HORA: <strong id="horaDuplicado">--:--</strong></span>
+          </div>
+
+          <div class="fields-block">
+            <div class="field-group">
+              <div class="field-label">CLIENTE:</div>
+              <div class="field-value" id="clienteDuplicado"></div>
+            </div>
+            <div class="field-group">
+              <div class="field-label">DINERO RECIBIDO:</div>
+              <div class="field-value money" id="dineroDuplicado"></div>
+            </div>
+            <div class="field-group">
+              <div class="field-label">DESCRIPCIÓN / OBSERVACIÓN:</div>
+              <div class="field-value obs" id="obsDuplicado"></div>
+            </div>
+          </div>
+
+          <div class="signature-row">
+            <div class="signature-cliente">Firma del Cliente</div>
+            <div class="signature-cobro">Cobro</div>
+          </div>
+
+          <div class="copy-label">DUPLICADO</div>
+        </div>
+      </div>
+
+      <div class="scale-note">
+        Tamaño real: 80 × 297mm · Impresora térmica<br />
+        Al imprimir seleccioná <strong>tamaño de página personalizado 80mm</strong>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
