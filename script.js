@@ -32,15 +32,18 @@ let now = new Date();
 
 const state = {
   cliente: '',
+  dni: '',
   dineroRecibido: '',
   observacion: '',
 };
 
 // ── DOM refs ──
 const clienteInput = document.getElementById('cliente');
+const dniInput = document.getElementById('dni');
 const dineroInput = document.getElementById('dinero');
 const observacionInput = document.getElementById('observacion');
 const printBtn = document.getElementById('printBtn');
+const resetCounterBtn = document.getElementById('resetCounterBtn');
 
 const badgeNumber = document.getElementById('badgeNumber');
 const badgeDate = document.getElementById('badgeDate');
@@ -48,6 +51,8 @@ const badgeTime = document.getElementById('badgeTime');
 
 const historyList = document.getElementById('historyList');
 const historyEmpty = document.getElementById('historyEmpty');
+const historyNoResults = document.getElementById('historyNoResults');
+const historySearchInput = document.getElementById('historySearch');
 const clearHistoryBtn = document.getElementById('clearHistoryBtn');
 
 const refs = {
@@ -58,6 +63,7 @@ const refs = {
     anio: document.getElementById('anioOriginal'),
     hora: document.getElementById('horaOriginal'),
     cliente: document.getElementById('clienteOriginal'),
+    dni: document.getElementById('dniOriginal'),
     dinero: document.getElementById('dineroOriginal'),
     obs: document.getElementById('obsOriginal'),
   },
@@ -68,6 +74,7 @@ const refs = {
     anio: document.getElementById('anioDuplicado'),
     hora: document.getElementById('horaDuplicado'),
     cliente: document.getElementById('clienteDuplicado'),
+    dni: document.getElementById('dniDuplicado'),
     dinero: document.getElementById('dineroDuplicado'),
     obs: document.getElementById('obsDuplicado'),
   },
@@ -93,6 +100,7 @@ function render() {
     r.anio.textContent = anio;
     r.hora.textContent = hora;
     r.cliente.textContent = state.cliente;
+    r.dni.textContent = state.dni;
     r.dinero.textContent = dineroFormatted;
     r.obs.textContent = state.observacion;
   }
@@ -108,6 +116,11 @@ function render() {
 // ── Input listeners ──
 clienteInput.addEventListener('input', (e) => {
   state.cliente = e.target.value;
+  render();
+});
+
+dniInput.addEventListener('input', (e) => {
+  state.dni = e.target.value;
   render();
 });
 
@@ -171,10 +184,21 @@ function downloadDataUrl(dataUrl, filename) {
 
 function renderHistory() {
   const history = loadHistory();
+  const query = historySearchInput.value.trim().toLowerCase();
+
+  const filtered = query
+    ? history.filter((entry) => {
+        const dniMatch = (entry.dni || '').toLowerCase().includes(query);
+        const clienteMatch = (entry.cliente || '').toLowerCase().includes(query);
+        return dniMatch || clienteMatch;
+      })
+    : history;
+
   historyEmpty.style.display = history.length ? 'none' : 'block';
+  historyNoResults.style.display = history.length && query && filtered.length === 0 ? 'block' : 'none';
   historyList.innerHTML = '';
 
-  history.forEach((entry) => {
+  filtered.forEach((entry) => {
     const item = document.createElement('div');
     item.className = 'history-item';
     item.innerHTML = `
@@ -183,21 +207,40 @@ function renderHistory() {
         <span class="history-item-date">${entry.diaMesAnio} · ${entry.hora}</span>
       </div>
       <div class="history-item-cliente">${escapeHtml(entry.cliente)}</div>
+      ${entry.dni ? `<div class="history-item-dni">DNI: ${escapeHtml(entry.dni)}</div>` : ''}
       ${entry.dinero ? `<div class="history-item-money">$ ${Number(entry.dinero).toLocaleString('es-AR')}</div>` : ''}
-      <button class="history-download-btn" data-id="${entry.id}">⬇ Descargar</button>
+      <div class="history-item-actions">
+        <button class="history-download-btn" data-id="${entry.id}">⬇ Descargar</button>
+        <button class="history-delete-btn" data-id="${entry.id}" title="Eliminar este recibo">🗑</button>
+      </div>
     `;
     historyList.appendChild(item);
   });
 }
 
 historyList.addEventListener('click', (e) => {
-  const btn = e.target.closest('.history-download-btn');
-  if (!btn) return;
-  const history = loadHistory();
-  const entry = history.find((h) => h.id === btn.dataset.id);
-  if (!entry) return;
-  downloadDataUrl(entry.pdfDataUrl, entry.filename);
+  const downloadBtn = e.target.closest('.history-download-btn');
+  if (downloadBtn) {
+    const history = loadHistory();
+    const entry = history.find((h) => h.id === downloadBtn.dataset.id);
+    if (entry) downloadDataUrl(entry.pdfDataUrl, entry.filename);
+    return;
+  }
+
+  const deleteBtn = e.target.closest('.history-delete-btn');
+  if (deleteBtn) {
+    const history = loadHistory();
+    const entry = history.find((h) => h.id === deleteBtn.dataset.id);
+    if (!entry) return;
+    if (confirm(`¿Eliminar el recibo N° ${padNum(entry.number)} de ${entry.cliente}? Esta acción no se puede deshacer.`)) {
+      const updated = history.filter((h) => h.id !== deleteBtn.dataset.id);
+      saveHistory(updated);
+      renderHistory();
+    }
+  }
 });
+
+historySearchInput.addEventListener('input', renderHistory);
 
 clearHistoryBtn.addEventListener('click', () => {
   if (confirm('¿Vaciar todo el historial de recibos? Esta acción no se puede deshacer.')) {
@@ -224,11 +267,12 @@ async function fetchNextReceiptNumberFromSupabase() {
   }
 }
 
-async function saveReceiptToSupabase({ number, cliente, dineroRecibido, observacion }) {
+async function saveReceiptToSupabase({ number, cliente, dni, dineroRecibido, observacion }) {
   const { error } = await supabaseClient.from('recibos').insert([
     {
       number,
       cliente,
+      dni: dni || null,
       dinero_recibido: dineroRecibido ? Number(dineroRecibido) : null,
       observacion: observacion || null,
     },
@@ -281,6 +325,7 @@ async function handleGeneratePdf() {
       await saveReceiptToSupabase({
         number: currentNumber,
         cliente: state.cliente,
+        dni: state.dni,
         dineroRecibido: state.dineroRecibido,
         observacion: state.observacion,
       });
@@ -294,6 +339,7 @@ async function handleGeneratePdf() {
       id: `${Date.now()}-${currentNumber}`,
       number: currentNumber,
       cliente: state.cliente,
+      dni: state.dni,
       dinero: state.dineroRecibido,
       observacion: state.observacion,
       diaMesAnio: `${dia}/${mes}/${anio}`,
@@ -308,9 +354,11 @@ async function handleGeneratePdf() {
     localStorage.setItem(STORAGE_KEY_COUNTER, String(next));
 
     state.cliente = '';
+    state.dni = '';
     state.dineroRecibido = '';
     state.observacion = '';
     clienteInput.value = '';
+    dniInput.value = '';
     dineroInput.value = '';
     observacionInput.value = '';
 
@@ -328,6 +376,41 @@ async function handleGeneratePdf() {
       printBtn.textContent = '⬇ Descargar PDF';
       render();
     }, 1400);
+  }
+}
+
+// ── Reiniciar el contador a 1 ──
+// El próximo número siempre se calcula como max(number)+1 de la tabla
+// 'recibos' en Supabase, así que reiniciar de verdad requiere borrar esos
+// registros; si no, al recargar la página el contador volvería a subir solo.
+resetCounterBtn.addEventListener('click', handleResetCounter);
+
+async function handleResetCounter() {
+  const confirmed = confirm(
+    '¿Reiniciar el contador a 1?\n\n' +
+    'Esto va a BORRAR TODOS los recibos guardados en la tabla de Supabase (no se puede deshacer).\n' +
+    'El historial local de PDFs de la derecha NO se toca.'
+  );
+  if (!confirmed) return;
+
+  resetCounterBtn.disabled = true;
+  const originalIcon = resetCounterBtn.textContent;
+  resetCounterBtn.textContent = '…';
+
+  try {
+    const { error } = await supabaseClient.from('recibos').delete().gte('id', 0);
+    if (error) throw error;
+
+    receiptNumber = 1;
+    localStorage.setItem(STORAGE_KEY_COUNTER, '1');
+    render();
+    alert('Listo, el contador se reinició a 1.');
+  } catch (err) {
+    console.error('No se pudo reiniciar el contador', err);
+    alert('No se pudo borrar los recibos en Supabase, así que el contador no se reinició (para evitar que se desincronice). Revisá tu conexión e intentá de nuevo.');
+  } finally {
+    resetCounterBtn.disabled = false;
+    resetCounterBtn.textContent = originalIcon;
   }
 }
 
