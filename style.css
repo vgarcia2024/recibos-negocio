@@ -381,6 +381,16 @@ input:focus, textarea:focus {
   overflow: hidden;
 }
 
+/* Todo el contenido del recibo va en negrita fuerte para que se marque bien
+   en la impresora térmica, incluso el texto que antes iba en peso normal. */
+.receipt-sheet,
+.receipt-sheet * {
+  font-weight: 900 !important;
+  /* Courier New solo tiene normal/bold reales; este truco agrega un grosor
+     extra simulado para que se vea aún más marcado al imprimir. */
+  text-shadow: 0.35px 0 0 currentColor, -0.35px 0 0 currentColor;
+}
+
 .watermark {
   position: absolute;
   top: 50%;
