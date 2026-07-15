@@ -25,7 +25,10 @@
       <!-- Receipt number badge -->
       <div class="badge-row">
         <div>
-          <div class="badge-label">N° DE RECIBO</div>
+          <div class="badge-label-row">
+            <div class="badge-label">N° DE RECIBO</div>
+            <button id="resetCounterBtn" class="reset-counter-btn" title="Reiniciar contador a 1">↺</button>
+          </div>
           <div class="badge-number" id="badgeNumber">00001</div>
         </div>
         <div class="badge-date-wrap">
@@ -40,6 +43,11 @@
         <div class="field">
           <label for="cliente">CLIENTE</label>
           <input type="text" id="cliente" placeholder="Nombre del cliente..." />
+        </div>
+
+        <div class="field">
+          <label for="dni">DNI</label>
+          <input type="text" id="dni" placeholder="Número de documento..." inputmode="numeric" />
         </div>
 
         <div class="field">
@@ -108,6 +116,10 @@
               <div class="field-value" id="clienteOriginal"></div>
             </div>
             <div class="field-group">
+              <div class="field-label">DNI:</div>
+              <div class="field-value" id="dniOriginal"></div>
+            </div>
+            <div class="field-group">
               <div class="field-label">DINERO RECIBIDO:</div>
               <div class="field-value money" id="dineroOriginal"></div>
             </div>
@@ -166,6 +178,10 @@
               <div class="field-value" id="clienteDuplicado"></div>
             </div>
             <div class="field-group">
+              <div class="field-label">DNI:</div>
+              <div class="field-value" id="dniDuplicado"></div>
+            </div>
+            <div class="field-group">
               <div class="field-label">DINERO RECIBIDO:</div>
               <div class="field-value money" id="dineroDuplicado"></div>
             </div>
@@ -194,10 +210,13 @@
     <div class="history-panel">
       <div class="history-header">
         <div class="history-title">HISTORIAL DE RECIBOS</div>
-        <button id="clearHistoryBtn" class="clear-history-btn" title="Vaciar historial">🗑</button>
+        <button id="clearHistoryBtn" class="clear-history-btn" title="Vaciar todo el historial">🗑</button>
       </div>
 
+      <input type="text" id="historySearch" class="history-search" placeholder="🔍 Buscar por DNI o cliente..." />
+
       <div id="historyEmpty" class="history-empty">Todavía no generaste ningún recibo.<br />Cuando descargues uno, va a aparecer acá.</div>
+      <div id="historyNoResults" class="history-empty" style="display:none;">No se encontraron recibos con esa búsqueda.</div>
       <div id="historyList" class="history-list"></div>
     </div>
   </div>
