@@ -58,7 +58,7 @@
 
       <!-- Info note -->
       <div class="note note-info">
-        💡 Al imprimir se genera el <strong>ORIGINAL</strong> (cliente) y el <strong>DUPLICADO</strong> (tu copia). El número se incrementa automáticamente.
+        💡 Al descargar se genera un PDF con el <strong>ORIGINAL</strong> (cliente) y el <strong>DUPLICADO</strong> (tu copia). El número se incrementa automáticamente.
       </div>
 
       <!-- Supabase note -->
@@ -66,8 +66,8 @@
         🗄️ <strong>Supabase:</strong> Conecta tu base de datos para guardar recibos y sincronizar el contador entre dispositivos. El número actual se guarda localmente por ahora.
       </div>
 
-      <!-- Print button -->
-      <button id="printBtn" class="print-btn" disabled>🖨 Imprimir / Exportar PDF</button>
+      <!-- Download button -->
+      <button id="printBtn" class="print-btn" disabled>⬇ Descargar PDF</button>
     </div>
 
     <!-- ── RIGHT PANEL: RECEIPT PREVIEW ── -->
@@ -184,12 +184,25 @@
       </div>
 
       <div class="scale-note">
-        Tamaño real: 80 × 297mm · Impresora térmica<br />
-        Al imprimir seleccioná <strong>tamaño de página personalizado 80mm</strong>
+        Tamaño real: 72 × 297mm aprox. · Pensado para impresora térmica 80mm
       </div>
+    </div>
+
+    <!-- ── RIGHT PANEL: HISTORY ── -->
+    <div class="history-panel">
+      <div class="history-header">
+        <div class="history-title">HISTORIAL DE RECIBOS</div>
+        <button id="clearHistoryBtn" class="clear-history-btn" title="Vaciar historial">🗑</button>
+      </div>
+
+      <div id="historyEmpty" class="history-empty">Todavía no generaste ningún recibo.<br />Cuando descargues uno, va a aparecer acá.</div>
+      <div id="historyList" class="history-list"></div>
     </div>
   </div>
 
+  <!-- Librerías para generar el PDF en el navegador -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="script.js"></script>
 </body>
 </html>
