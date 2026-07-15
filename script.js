@@ -250,6 +250,11 @@ async function handleGeneratePdf() {
   const currentNumber = receiptNumber;
   let syncedOk = true;
 
+  // La vista previa puede estar achicada visualmente (transform: scale) para
+  // entrar en pantalla; para el PDF necesitamos capturarla a tamaño real.
+  const previousTransform = printArea.style.transform;
+  printArea.style.transform = 'scale(1)';
+
   try {
     const canvas = await html2canvas(document.getElementById('print-area'), {
       scale: 3,
@@ -316,6 +321,9 @@ async function handleGeneratePdf() {
     // Si falla, el formulario NO se limpia, así el botón se puede reactivar abajo
   } finally {
     delete printBtn.dataset.busy;
+    // Restauramos el escalado visual de la vista previa (no afecta al PDF ya generado)
+    printArea.style.transform = previousTransform;
+    fitPreview();
     setTimeout(() => {
       printBtn.textContent = '⬇ Descargar PDF';
       render();
@@ -338,3 +346,46 @@ async function init() {
 }
 
 init();
+
+// ── Auto-ajuste de la vista previa ──
+// Escala #print-area para que SIEMPRE entren completos el ORIGINAL y el
+// DUPLICADO dentro del espacio disponible, sin importar el zoom del
+// navegador ni el tamaño de la ventana. Nunca se corta el contenido.
+const previewFitWrap = document.getElementById('previewFitWrap');
+const printArea = document.getElementById('print-area');
+
+function fitPreview() {
+  if (!previewFitWrap || !printArea) return;
+
+  // Medimos el tamaño natural (sin escalar) del recibo
+  printArea.style.transform = 'scale(1)';
+  const naturalWidth = printArea.offsetWidth;
+  const naturalHeight = printArea.offsetHeight;
+  const availableWidth = previewFitWrap.clientWidth;
+  const availableHeight = previewFitWrap.clientHeight;
+
+  if (!naturalWidth || !naturalHeight || !availableWidth || !availableHeight) return;
+
+  // Nunca agrandamos más allá del 100%, solo achicamos si no entra
+  const scale = Math.min(availableWidth / naturalWidth, availableHeight / naturalHeight, 1);
+  printArea.style.transform = `scale(${scale})`;
+}
+
+window.addEventListener('resize', fitPreview);
+window.addEventListener('load', fitPreview);
+
+if (window.ResizeObserver) {
+  new ResizeObserver(fitPreview).observe(previewFitWrap);
+}
+
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(fitPreview);
+}
+
+document.querySelectorAll('.logo-row img').forEach((img) => {
+  if (img.complete) fitPreview();
+  else img.addEventListener('load', fitPreview);
+});
+
+fitPreview();
+setTimeout(fitPreview, 300);
