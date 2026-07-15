@@ -1,3 +1,8 @@
+// ── Supabase ──
+const SUPABASE_URL = 'https://xalezzewvdlrgqpcpwgi.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_YfrOu5FpEreNWAxfhDmp_w_xEV6daRe';
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+
 // ── Helpers ──
 const padNum = (n) => String(n).padStart(5, '0');
 
@@ -16,7 +21,7 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-// ── Storage keys ──
+// ── Storage keys (fallback local, por si no hay conexión) ──
 const STORAGE_KEY_COUNTER = 'zeroxsiento_next_receipt';
 const STORAGE_KEY_HISTORY = 'zeroxsiento_history';
 const MAX_HISTORY = 40;
@@ -93,7 +98,7 @@ function render() {
   }
 
   const hasCliente = state.cliente.trim().length > 0;
-  // Never override the button while it's actively generating a PDF
+  // Nunca pisar el botón mientras está generando el PDF
   if (!printBtn.dataset.busy) {
     printBtn.disabled = !hasCliente;
     printBtn.classList.toggle('active', hasCliente);
@@ -116,13 +121,13 @@ observacionInput.addEventListener('input', (e) => {
   render();
 });
 
-// ── Clock tick (updates date/time every second) ──
+// ── Clock tick (actualiza fecha/hora cada segundo) ──
 setInterval(() => {
   now = new Date();
   render();
 }, 1000);
 
-// ── History (localStorage) ──
+// ── Historial de PDFs (localStorage) ──
 function loadHistory() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_HISTORY);
@@ -148,7 +153,6 @@ function addToHistory(entry) {
   while (history.length > MAX_HISTORY) history.pop();
 
   let ok = saveHistory(history);
-  // If localStorage quota is exceeded, drop the oldest entries until it fits
   while (!ok && history.length > 1) {
     history.pop();
     ok = saveHistory(history);
@@ -202,7 +206,37 @@ clearHistoryBtn.addEventListener('click', () => {
   }
 });
 
-// ── PDF generation + download ──
+// ── Supabase: número siguiente + guardado del recibo ──
+async function fetchNextReceiptNumberFromSupabase() {
+  try {
+    const { data, error } = await supabaseClient
+      .from('recibos')
+      .select('number')
+      .order('number', { ascending: false })
+      .limit(1);
+
+    if (error) throw error;
+    if (data && data.length > 0) return data[0].number + 1;
+    return 1;
+  } catch (err) {
+    console.warn('No se pudo sincronizar el contador con Supabase, uso el guardado local.', err);
+    return null; // señal para usar el fallback local
+  }
+}
+
+async function saveReceiptToSupabase({ number, cliente, dineroRecibido, observacion }) {
+  const { error } = await supabaseClient.from('recibos').insert([
+    {
+      number,
+      cliente,
+      dinero_recibido: dineroRecibido ? Number(dineroRecibido) : null,
+      observacion: observacion || null,
+    },
+  ]);
+  if (error) throw error;
+}
+
+// ── Generar y descargar el PDF ──
 printBtn.addEventListener('click', handleGeneratePdf);
 
 async function handleGeneratePdf() {
@@ -212,6 +246,9 @@ async function handleGeneratePdf() {
   printBtn.disabled = true;
   printBtn.classList.remove('active');
   printBtn.textContent = 'Generando PDF...';
+
+  const currentNumber = receiptNumber;
+  let syncedOk = true;
 
   try {
     const canvas = await html2canvas(document.getElementById('print-area'), {
@@ -228,15 +265,29 @@ async function handleGeneratePdf() {
 
     const { dia, mes, anio, hora } = formatDateParts(now);
     const safeCliente = state.cliente.trim().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/\s+/g, '_') || 'recibo';
-    const filename = `recibo-${padNum(receiptNumber)}-${safeCliente}.pdf`;
+    const filename = `recibo-${padNum(currentNumber)}-${safeCliente}.pdf`;
     const pdfDataUrl = pdf.output('datauristring');
 
-    // Triggers a direct file download (does NOT open/navigate the page)
+    // Descarga directa del archivo (no abre ni navega la página)
     pdf.save(filename);
 
+    // Guardar los datos del recibo en Supabase (best-effort)
+    try {
+      await saveReceiptToSupabase({
+        number: currentNumber,
+        cliente: state.cliente,
+        dineroRecibido: state.dineroRecibido,
+        observacion: state.observacion,
+      });
+    } catch (syncErr) {
+      syncedOk = false;
+      console.warn('El recibo se descargó pero no se pudo guardar en Supabase.', syncErr);
+    }
+
+    // Guardar el PDF en el historial local para poder re-descargarlo
     addToHistory({
-      id: `${Date.now()}-${receiptNumber}`,
-      number: receiptNumber,
+      id: `${Date.now()}-${currentNumber}`,
+      number: currentNumber,
       cliente: state.cliente,
       dinero: state.dineroRecibido,
       observacion: state.observacion,
@@ -246,10 +297,10 @@ async function handleGeneratePdf() {
       filename,
     });
 
-    // Only advance the counter and clear the form after a SUCCESSFUL export
-    const next = receiptNumber + 1;
-    localStorage.setItem(STORAGE_KEY_COUNTER, String(next));
+    // Avanzar el contador y limpiar el formulario solo si el PDF se generó bien
+    const next = currentNumber + 1;
     receiptNumber = next;
+    localStorage.setItem(STORAGE_KEY_COUNTER, String(next));
 
     state.cliente = '';
     state.dineroRecibido = '';
@@ -257,21 +308,31 @@ async function handleGeneratePdf() {
     clienteInput.value = '';
     dineroInput.value = '';
     observacionInput.value = '';
+
+    printBtn.textContent = syncedOk ? '✓ Descargado y guardado' : '✓ Descargado (sin conexión)';
   } catch (err) {
     console.error('Error generando el PDF', err);
     alert('Hubo un problema generando el PDF. Probá de nuevo.');
-    // On failure, the form is NOT cleared, so the button can reactivate below
+    // Si falla, el formulario NO se limpia, así el botón se puede reactivar abajo
   } finally {
     delete printBtn.dataset.busy;
-    printBtn.textContent = '⬇ Descargar PDF';
-    render();
+    setTimeout(() => {
+      printBtn.textContent = '⬇ Descargar PDF';
+      render();
+    }, 1400);
   }
 }
 
 // ── Init ──
-function init() {
-  const stored = localStorage.getItem(STORAGE_KEY_COUNTER);
-  receiptNumber = stored ? parseInt(stored, 10) : 1;
+async function init() {
+  const localStored = localStorage.getItem(STORAGE_KEY_COUNTER);
+  const localNumber = localStored ? parseInt(localStored, 10) : 1;
+
+  const remoteNumber = await fetchNextReceiptNumberFromSupabase();
+  // Si Supabase respondió, usamos el mayor entre lo remoto y lo local
+  // (por si se generaron recibos offline que todavía no sincronizaron)
+  receiptNumber = remoteNumber !== null ? Math.max(remoteNumber, localNumber) : localNumber;
+
   render();
   renderHistory();
 }
