@@ -2,6 +2,7 @@
 const SUPABASE_URL = 'https://xalezzewvdlrgqpcpwgi.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_YfrOu5FpEreNWAxfhDmp_w_xEV6daRe';
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+const STORAGE_BUCKET = 'recibos-pdf';
 
 // ── Helpers ──
 const padNum = (n) => String(n).padStart(5, '0');
@@ -21,14 +22,21 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-// ── Storage keys (fallback local, por si no hay conexión) ──
+function slugify(str) {
+  return (str || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // saca acentos
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+}
+
+// ── Storage keys (fallback local solo para el contador offline) ──
 const STORAGE_KEY_COUNTER = 'zeroxsiento_next_receipt';
-const STORAGE_KEY_HISTORY = 'zeroxsiento_history';
-const MAX_HISTORY = 40;
 
 // ── State ──
 let receiptNumber = 1;
 let now = new Date();
+let historyCache = []; // último snapshot traído de Supabase
 
 const state = {
   cliente: '',
@@ -106,7 +114,6 @@ function render() {
   }
 
   const hasCliente = state.cliente.trim().length > 0;
-  // Nunca pisar el botón mientras está generando el PDF
   if (!printBtn.dataset.busy) {
     printBtn.disabled = !hasCliente;
     printBtn.classList.toggle('active', hasCliente);
@@ -134,81 +141,57 @@ observacionInput.addEventListener('input', (e) => {
   render();
 });
 
-// ── Clock tick (actualiza fecha/hora cada segundo) ──
+// ── Clock tick ──
 setInterval(() => {
   now = new Date();
   render();
 }, 1000);
 
-// ── Historial de PDFs (localStorage) ──
-function loadHistory() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_HISTORY);
-    return raw ? JSON.parse(raw) : [];
-  } catch (err) {
-    console.warn('No se pudo leer el historial', err);
-    return [];
+// ── Historial: ahora vive en Supabase (tabla recibos + Storage) ──
+async function fetchHistoryFromSupabase() {
+  const { data, error } = await supabaseClient
+    .from('recibos')
+    .select('id, number, cliente, dni, dinero_recibido, observacion, created_at, pdf_url, pdf_path')
+    .not('pdf_url', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(200);
+
+  if (error) {
+    console.warn('No se pudo cargar el historial desde Supabase.', error);
+    return null;
   }
-}
-
-function saveHistory(list) {
-  try {
-    localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(list));
-    return true;
-  } catch (err) {
-    return false;
-  }
-}
-
-function addToHistory(entry) {
-  let history = loadHistory();
-  history.unshift(entry);
-  while (history.length > MAX_HISTORY) history.pop();
-
-  let ok = saveHistory(history);
-  while (!ok && history.length > 1) {
-    history.pop();
-    ok = saveHistory(history);
-  }
-  renderHistory();
-}
-
-function downloadDataUrl(dataUrl, filename) {
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  return data;
 }
 
 function renderHistory() {
-  const history = loadHistory();
   const query = historySearchInput.value.trim().toLowerCase();
 
   const filtered = query
-    ? history.filter((entry) => {
+    ? historyCache.filter((entry) => {
         const dniMatch = (entry.dni || '').toLowerCase().includes(query);
         const clienteMatch = (entry.cliente || '').toLowerCase().includes(query);
         return dniMatch || clienteMatch;
       })
-    : history;
+    : historyCache;
 
-  historyEmpty.style.display = history.length ? 'none' : 'block';
-  historyNoResults.style.display = history.length && query && filtered.length === 0 ? 'block' : 'none';
+  historyEmpty.style.display = historyCache.length ? 'none' : 'block';
+  historyNoResults.style.display = historyCache.length && query && filtered.length === 0 ? 'block' : 'none';
   historyList.innerHTML = '';
 
   filtered.forEach((entry) => {
+    const d = new Date(entry.created_at);
+    const { dia, mes, anio, hora } = formatDateParts(d);
+
     const item = document.createElement('div');
     item.className = 'history-item';
     item.innerHTML = `
       <div class="history-item-top">
         <span class="history-item-number">N° ${padNum(entry.number)}</span>
-        <span class="history-item-date">${entry.diaMesAnio} · ${entry.hora}</span>
+        <span class="history-item-date">${dia}/${mes}/${anio} · ${hora}</span>
       </div>
       <div class="history-item-cliente">${escapeHtml(entry.cliente)}</div>
       ${entry.dni ? `<div class="history-item-dni">DNI: ${escapeHtml(entry.dni)}</div>` : ''}
-      ${entry.dinero ? `<div class="history-item-money">$ ${Number(entry.dinero).toLocaleString('es-AR')}</div>` : ''}
+      ${entry.dinero_recibido ? `<div class="history-item-money">$ ${Number(entry.dinero_recibido).toLocaleString('es-AR')}</div>` : ''}
       <div class="history-item-actions">
         <button class="history-download-btn" data-id="${entry.id}">⬇ Descargar</button>
         <button class="history-delete-btn" data-id="${entry.id}" title="Eliminar este recibo">🗑</button>
@@ -218,38 +201,89 @@ function renderHistory() {
   });
 }
 
-historyList.addEventListener('click', (e) => {
+async function refreshHistory() {
+  const data = await fetchHistoryFromSupabase();
+  if (data !== null) historyCache = data;
+  renderHistory();
+}
+
+async function downloadFromUrl(url, filename) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(objectUrl);
+  } catch (err) {
+    console.error('No se pudo descargar el PDF desde Storage', err);
+    alert('No se pudo descargar ese PDF. Revisá tu conexión e intentá de nuevo.');
+  }
+}
+
+historyList.addEventListener('click', async (e) => {
   const downloadBtn = e.target.closest('.history-download-btn');
   if (downloadBtn) {
-    const history = loadHistory();
-    const entry = history.find((h) => h.id === downloadBtn.dataset.id);
-    if (entry) downloadDataUrl(entry.pdfDataUrl, entry.filename);
+    const entry = historyCache.find((h) => String(h.id) === downloadBtn.dataset.id);
+    if (entry) {
+      const safeDni = slugify(entry.dni) || slugify(entry.cliente) || 'recibo';
+      downloadFromUrl(entry.pdf_url, `recibo-${padNum(entry.number)}-${safeDni}.pdf`);
+    }
     return;
   }
 
   const deleteBtn = e.target.closest('.history-delete-btn');
   if (deleteBtn) {
-    const history = loadHistory();
-    const entry = history.find((h) => h.id === deleteBtn.dataset.id);
+    const entry = historyCache.find((h) => String(h.id) === deleteBtn.dataset.id);
     if (!entry) return;
-    if (confirm(`¿Eliminar el recibo N° ${padNum(entry.number)} de ${entry.cliente}? Esta acción no se puede deshacer.`)) {
-      const updated = history.filter((h) => h.id !== deleteBtn.dataset.id);
-      saveHistory(updated);
-      renderHistory();
+    if (!confirm(`¿Eliminar el recibo N° ${padNum(entry.number)} de ${entry.cliente}? Esta acción no se puede deshacer.`)) return;
+
+    deleteBtn.disabled = true;
+    try {
+      if (entry.pdf_path) {
+        await supabaseClient.storage.from(STORAGE_BUCKET).remove([entry.pdf_path]);
+      }
+      const { error } = await supabaseClient.from('recibos').delete().eq('id', entry.id);
+      if (error) throw error;
+      await refreshHistory();
+    } catch (err) {
+      console.error('No se pudo eliminar el recibo', err);
+      alert('No se pudo eliminar el recibo. Revisá tu conexión e intentá de nuevo.');
+      deleteBtn.disabled = false;
     }
   }
 });
 
 historySearchInput.addEventListener('input', renderHistory);
 
-clearHistoryBtn.addEventListener('click', () => {
-  if (confirm('¿Vaciar todo el historial de recibos? Esta acción no se puede deshacer.')) {
-    localStorage.removeItem(STORAGE_KEY_HISTORY);
-    renderHistory();
+clearHistoryBtn.addEventListener('click', async () => {
+  if (!historyCache.length) return;
+  if (!confirm('¿Vaciar todo el historial de recibos? Esto borra los PDF de Supabase Storage y no se puede deshacer.')) return;
+
+  clearHistoryBtn.disabled = true;
+  try {
+    const paths = historyCache.map((h) => h.pdf_path).filter(Boolean);
+    if (paths.length) await supabaseClient.storage.from(STORAGE_BUCKET).remove(paths);
+
+    const ids = historyCache.map((h) => h.id);
+    if (ids.length) {
+      const { error } = await supabaseClient.from('recibos').delete().in('id', ids);
+      if (error) throw error;
+    }
+    await refreshHistory();
+  } catch (err) {
+    console.error('No se pudo vaciar el historial', err);
+    alert('No se pudo vaciar el historial completo. Probá de nuevo.');
+  } finally {
+    clearHistoryBtn.disabled = false;
   }
 });
 
-// ── Supabase: número siguiente + guardado del recibo ──
+// ── Supabase: número siguiente ──
 async function fetchNextReceiptNumberFromSupabase() {
   try {
     const { data, error } = await supabaseClient
@@ -263,11 +297,23 @@ async function fetchNextReceiptNumberFromSupabase() {
     return 1;
   } catch (err) {
     console.warn('No se pudo sincronizar el contador con Supabase, uso el guardado local.', err);
-    return null; // señal para usar el fallback local
+    return null;
   }
 }
 
-async function saveReceiptToSupabase({ number, cliente, dni, dineroRecibido, observacion }) {
+// ── Subir el PDF a Supabase Storage ──
+async function uploadPdfToStorage(blob, path) {
+  const { error: uploadError } = await supabaseClient.storage
+    .from(STORAGE_BUCKET)
+    .upload(path, blob, { contentType: 'application/pdf', upsert: true });
+
+  if (uploadError) throw uploadError;
+
+  const { data } = supabaseClient.storage.from(STORAGE_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+
+async function saveReceiptToSupabase({ number, cliente, dni, dineroRecibido, observacion, pdfUrl, pdfPath }) {
   const { error } = await supabaseClient.from('recibos').insert([
     {
       number,
@@ -275,12 +321,14 @@ async function saveReceiptToSupabase({ number, cliente, dni, dineroRecibido, obs
       dni: dni || null,
       dinero_recibido: dineroRecibido ? Number(dineroRecibido) : null,
       observacion: observacion || null,
+      pdf_url: pdfUrl,
+      pdf_path: pdfPath,
     },
   ]);
   if (error) throw error;
 }
 
-// ── Generar y descargar el PDF ──
+// ── Generar, subir y descargar el PDF ──
 printBtn.addEventListener('click', handleGeneratePdf);
 
 async function handleGeneratePdf() {
@@ -294,8 +342,6 @@ async function handleGeneratePdf() {
   const currentNumber = receiptNumber;
   let syncedOk = true;
 
-  // La vista previa puede estar achicada visualmente (transform: scale) para
-  // entrar en pantalla; para el PDF necesitamos capturarla a tamaño real.
   const previousTransform = printArea.style.transform;
   printArea.style.transform = 'scale(1)';
 
@@ -312,43 +358,34 @@ async function handleGeneratePdf() {
     const pdf = new jsPDF({ unit: 'mm', format: [widthMM, heightMM] });
     pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, widthMM, heightMM, undefined, 'FAST');
 
-    const { dia, mes, anio, hora } = formatDateParts(now);
-    const safeCliente = state.cliente.trim().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/\s+/g, '_') || 'recibo';
-    const filename = `recibo-${padNum(currentNumber)}-${safeCliente}.pdf`;
-    const pdfDataUrl = pdf.output('datauristring');
+    const safeDni = slugify(state.dni) || slugify(state.cliente) || 'recibo';
+    const filename = `recibo-${padNum(currentNumber)}-${safeDni}.pdf`;
+    const storagePath = filename; // el nombre en Storage queda igual al del DNI/cliente
 
-    // Descarga directa del archivo (no abre ni navega la página)
+    // Descarga inmediata en este dispositivo
     pdf.save(filename);
 
-    // Guardar los datos del recibo en Supabase (best-effort)
+    // Subida a Supabase Storage + guardado en la tabla (best-effort)
     try {
+      const pdfBlob = pdf.output('blob');
+      const pdfUrl = await uploadPdfToStorage(pdfBlob, storagePath);
+
       await saveReceiptToSupabase({
         number: currentNumber,
         cliente: state.cliente,
         dni: state.dni,
         dineroRecibido: state.dineroRecibido,
         observacion: state.observacion,
+        pdfUrl,
+        pdfPath: storagePath,
       });
     } catch (syncErr) {
       syncedOk = false;
-      console.warn('El recibo se descargó pero no se pudo guardar en Supabase.', syncErr);
+      console.warn('El recibo se descargó pero no se pudo subir/guardar en Supabase.', syncErr);
     }
 
-    // Guardar el PDF en el historial local para poder re-descargarlo
-    addToHistory({
-      id: `${Date.now()}-${currentNumber}`,
-      number: currentNumber,
-      cliente: state.cliente,
-      dni: state.dni,
-      dinero: state.dineroRecibido,
-      observacion: state.observacion,
-      diaMesAnio: `${dia}/${mes}/${anio}`,
-      hora,
-      pdfDataUrl,
-      filename,
-    });
+    await refreshHistory();
 
-    // Avanzar el contador y limpiar el formulario solo si el PDF se generó bien
     const next = currentNumber + 1;
     receiptNumber = next;
     localStorage.setItem(STORAGE_KEY_COUNTER, String(next));
@@ -366,10 +403,8 @@ async function handleGeneratePdf() {
   } catch (err) {
     console.error('Error generando el PDF', err);
     alert('Hubo un problema generando el PDF. Probá de nuevo.');
-    // Si falla, el formulario NO se limpia, así el botón se puede reactivar abajo
   } finally {
     delete printBtn.dataset.busy;
-    // Restauramos el escalado visual de la vista previa (no afecta al PDF ya generado)
     printArea.style.transform = previousTransform;
     fitPreview();
     setTimeout(() => {
@@ -380,16 +415,12 @@ async function handleGeneratePdf() {
 }
 
 // ── Reiniciar el contador a 1 ──
-// El próximo número siempre se calcula como max(number)+1 de la tabla
-// 'recibos' en Supabase, así que reiniciar de verdad requiere borrar esos
-// registros; si no, al recargar la página el contador volvería a subir solo.
 resetCounterBtn.addEventListener('click', handleResetCounter);
 
 async function handleResetCounter() {
   const confirmed = confirm(
     '¿Reiniciar el contador a 1?\n\n' +
-    'Esto va a BORRAR TODOS los recibos guardados en la tabla de Supabase (no se puede deshacer).\n' +
-    'El historial local de PDFs de la derecha NO se toca.'
+    'Esto va a BORRAR TODOS los recibos guardados en Supabase (tabla y PDFs en Storage), no se puede deshacer.'
   );
   if (!confirmed) return;
 
@@ -398,11 +429,16 @@ async function handleResetCounter() {
   resetCounterBtn.textContent = '…';
 
   try {
+    const data = await fetchHistoryFromSupabase();
+    const paths = (data || []).map((h) => h.pdf_path).filter(Boolean);
+    if (paths.length) await supabaseClient.storage.from(STORAGE_BUCKET).remove(paths);
+
     const { error } = await supabaseClient.from('recibos').delete().gte('id', 0);
     if (error) throw error;
 
     receiptNumber = 1;
     localStorage.setItem(STORAGE_KEY_COUNTER, '1');
+    await refreshHistory();
     render();
     alert('Listo, el contador se reinició a 1.');
   } catch (err) {
@@ -420,27 +456,21 @@ async function init() {
   const localNumber = localStored ? parseInt(localStored, 10) : 1;
 
   const remoteNumber = await fetchNextReceiptNumberFromSupabase();
-  // Si Supabase respondió, usamos el mayor entre lo remoto y lo local
-  // (por si se generaron recibos offline que todavía no sincronizaron)
   receiptNumber = remoteNumber !== null ? Math.max(remoteNumber, localNumber) : localNumber;
 
   render();
-  renderHistory();
+  await refreshHistory();
 }
 
 init();
 
 // ── Auto-ajuste de la vista previa ──
-// Escala #print-area para que SIEMPRE entren completos el ORIGINAL y el
-// DUPLICADO dentro del espacio disponible, sin importar el zoom del
-// navegador ni el tamaño de la ventana. Nunca se corta el contenido.
 const previewFitWrap = document.getElementById('previewFitWrap');
 const printArea = document.getElementById('print-area');
 
 function fitPreview() {
   if (!previewFitWrap || !printArea) return;
 
-  // Medimos el tamaño natural (sin escalar) del recibo
   printArea.style.transform = 'scale(1)';
   const naturalWidth = printArea.offsetWidth;
   const naturalHeight = printArea.offsetHeight;
@@ -449,7 +479,6 @@ function fitPreview() {
 
   if (!naturalWidth || !naturalHeight || !availableWidth || !availableHeight) return;
 
-  // Nunca agrandamos más allá del 100%, solo achicamos si no entra
   const scale = Math.min(availableWidth / naturalWidth, availableHeight / naturalHeight, 1);
   printArea.style.transform = `scale(${scale})`;
 }
